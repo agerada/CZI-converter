@@ -157,10 +157,18 @@ class SlideConverter:
         while True:
             try:
                 czi_files = [f for f in self.config.INPUT_FOLDER.iterdir() if f.suffix.lower() == '.czi']
+                pending_files = []
                 for cf in czi_files:
                     cf_path = cf.resolve()
-                    if (not self.config.FORCE_RUN) and (str(cf_path) in processed_files):
-                        continue
+                    if self.config.FORCE_RUN or (str(cf_path) not in processed_files):
+                        pending_files.append(cf)
+
+                total_pending = len(pending_files)
+                for idx, cf in enumerate(pending_files, start=1):
+                    cf_path = cf.resolve()
+                    progress_msg = f"Processing file {idx}/{total_pending}: {cf.name}"
+                    print(progress_msg)
+                    logging.info(progress_msg)
                     if self.config.INDIVIDUAL_TILES:
                         out_path = self.config.OUTPUT_FOLDER / cf.stem
                     else:
