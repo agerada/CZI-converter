@@ -1,6 +1,7 @@
-requests
 numpy
 Pillow
-pma_python
-multiresolutionimageinterface
+openslide-python
+openslide-bin
+czifile
+tifffile
 PyYAML
