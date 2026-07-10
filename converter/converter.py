@@ -59,11 +59,15 @@ class SlideConverter:
         return arr
 
     def _convert_with_openslide(self, inp, out):
-        tile_size = self.config.OUTPUT_TILE_SIZE
-        out.mkdir(parents=True, exist_ok=True)
-
         with OpenSlide(str(inp)) as slide:
             width, height = slide.dimensions
+            if not self.config.INDIVIDUAL_TILES:
+                image = slide.read_region((0, 0), 0, (width, height)).convert("RGB")
+                tifffile.imwrite(str(out), np.asarray(image), photometric='rgb', compression='zlib')
+                return
+
+            tile_size = self.config.OUTPUT_TILE_SIZE
+            out.mkdir(parents=True, exist_ok=True)
             tile_count = 0
             for y in range(0, height, tile_size):
                 for x in range(0, width, tile_size):
@@ -86,14 +90,20 @@ class SlideConverter:
                 f.write(f"tile_count={tile_count}\n")
 
     def _convert_with_czifile(self, inp, out):
-        tile_size = self.config.OUTPUT_TILE_SIZE
-        out.mkdir(parents=True, exist_ok=True)
-
         with czifile.CziFile(str(inp)) as czi:
             arr = czi.asarray()
         normalized = self._normalize_image_array(arr)
 
+        if not self.config.INDIVIDUAL_TILES:
+            if normalized.ndim == 3:
+                tifffile.imwrite(str(out), normalized, photometric='rgb', compression='zlib')
+            else:
+                tifffile.imwrite(str(out), normalized, photometric='minisblack', compression='zlib')
+            return
+
         height, width = normalized.shape[:2]
+        tile_size = self.config.OUTPUT_TILE_SIZE
+        out.mkdir(parents=True, exist_ok=True)
         tile_count = 0
         for y in range(0, height, tile_size):
             for x in range(0, width, tile_size):
@@ -149,10 +159,13 @@ class SlideConverter:
                 czi_files = [f for f in self.config.INPUT_FOLDER.iterdir() if f.suffix.lower() == '.czi']
                 for cf in czi_files:
                     cf_path = cf.resolve()
-                    if str(cf_path) in processed_files:
+                    if (not self.config.FORCE_RUN) and (str(cf_path) in processed_files):
                         continue
-                    out_dir = self.config.OUTPUT_FOLDER / cf.stem
-                    self.convert_slide(cf_path, out_dir)
+                    if self.config.INDIVIDUAL_TILES:
+                        out_path = self.config.OUTPUT_FOLDER / cf.stem
+                    else:
+                        out_path = self.config.OUTPUT_FOLDER / f"{cf.stem}.tif"
+                    self.convert_slide(cf_path, out_path)
                     processed_files.add(str(cf_path))
                     self.save_processed_files(processed_files)
                 if self.config.RUN_ONCE:

@@ -6,5 +6,7 @@ PROCESSED_FILES_RECORD: "data/processed_files.txt"  # Relative path to processed
 LOG_FILE: "logs/conversion_automation.log"  # Relative path to log file
 CHECK_INTERVAL_SECONDS: 10  # Time interval (in seconds) to check for new files
 RUN_ONCE: true  # Process current files and exit
+FORCE_RUN: true  # true: always process files, even if listed in processed_files
+INDIVIDUAL_TILES: true  # true: write tile folder, false: write one large TIFF
 OUTPUT_TILE_SIZE: 2048  # Tile edge size in pixels
 OUTPUT_TILE_FORMAT: "tif"  # Tile file extension/format

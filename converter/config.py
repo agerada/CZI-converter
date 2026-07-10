@@ -19,5 +19,7 @@ class Config:
         self.CHECK_INTERVAL_SECONDS = config.get('CHECK_INTERVAL_SECONDS', 10)
         self.LOG_FILE = Path(config.get('LOG_FILE', 'logs/conversion_automation.log'))
         self.RUN_ONCE = config.get('RUN_ONCE', True)
+        self.FORCE_RUN = config.get('FORCE_RUN', False)
+        self.INDIVIDUAL_TILES = config.get('INDIVIDUAL_TILES', True)
         self.OUTPUT_TILE_SIZE = config.get('OUTPUT_TILE_SIZE', 2048)
         self.OUTPUT_TILE_FORMAT = config.get('OUTPUT_TILE_FORMAT', 'tif')
