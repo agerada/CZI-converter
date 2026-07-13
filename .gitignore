@@ -5,3 +5,4 @@
 /data/processed_files.txt
 /logs
 .python-version
+/tests/__pycache__
