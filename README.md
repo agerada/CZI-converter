@@ -74,3 +74,9 @@ To run tests:
 ```bash
 uv run pytest
 ```
+
+## Credits
+
+This project is a fork of [farbodkhoraminia/CZI-converter](https://github.com/farbodkhoraminia/CZI-converter).
+
+Nicolas Chiaruttini (2023) ‘CZI file examples’. Zenodo. Available at: https://doi.org/10.5281/zenodo.8305531. *Used in the testing suite*
