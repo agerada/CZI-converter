@@ -1,27 +1,15 @@
 # converter/converter.py
-import os
-import sys
 import time
 import logging
-import threading
-import gc
-from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
-from PIL import Image
-import requests
 import numpy as np
-from pma_python import core
-import multiresolutionimageinterface as mir
-
-from .utils import run_pma_start
+import tifffile
+from openslide import OpenSlide, OpenSlideError
+import czifile
 
 class SlideConverter:
     def __init__(self, config):
         self.config = config
-        self.processing_status = {}
-        self.status_lock = threading.Lock()
         self.setup_logging()
-        self.update_sys_path()
         self.ensure_directories()
 
     def setup_logging(self):
@@ -32,114 +20,125 @@ class SlideConverter:
         )
         logging.info("Logging initialized.")
 
-    def update_sys_path(self):
-        sys.path = [p for p in sys.path if "ASAP" not in p]
-        sys.path.insert(0, str(self.config.ASAP_BIN_PATH))
-        logging.info(f"Updated sys.path with ASAP_BIN_PATH: {self.config.ASAP_BIN_PATH}")
-
     def ensure_directories(self):
         """
         Ensures that the output directory exists.
         """
         self.config.OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
         self.config.INPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+        self.config.LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         logging.info("Verified input and output directories.")
 
-    def get_tile(self, slide, x, y, z, session):
-        pma_session_id = "SDK.Python"
-        pma_url = core._pma_url(pma_session_id) + "tile"
-        params = {
-            "sessionID": pma_session_id,
-            "channels": 0,
-            "timeframe": 0,
-            "layer": 0,
-            "pathOrUid": str(slide),
-            "x": int(round(x)),
-            "y": int(round(y)),
-            "z": int(round(z)),
-            "format": "jpg",
-            "quality": 100,
-            "cache": "false"
-        }
-        for attempt in range(self.config.MAX_RETRIES):
-            try:
-                response = session.get(pma_url, params=params, timeout=30)
-                response.raise_for_status()
-                return Image.open(BytesIO(response.content))
-            except Exception as e:
-                logging.warning(f"Attempt {attempt + 1} failed to get tile ({x}, {y}, {z}): {e}")
-                time.sleep(1)
-        logging.error(f"Failed to retrieve tile ({x}, {y}, {z}) after {self.config.MAX_RETRIES} attempts.")
-        return None
+    def _normalize_image_array(self, arr):
+        """Normalize CZI arrays to a 2D or RGB image."""
+        arr = np.squeeze(arr)
 
-    def process_tile(self, xi, yi, tsize, inp, z, sess, cur_file):
-        tile = self.get_tile(inp, xi, yi, z, sess)
-        if tile is None:
-            return None, None, None
-        patch = np.array(tile, dtype=np.uint8).flatten()
-        with self.processing_status[cur_file]['lock']:
-            self.processing_status[cur_file]['last_tile_count'] += 1
-            self.processing_status[cur_file]['last_progress_time'] = time.time()
-        return patch, xi * tsize, yi * tsize
+        while arr.ndim > 3:
+            arr = arr[0]
+
+        if arr.ndim == 3:
+            if arr.shape[-1] in (3, 4):
+                arr = arr[..., :3]
+            elif arr.shape[0] in (3, 4):
+                arr = np.moveaxis(arr[:3], 0, -1)
+            else:
+                arr = arr[0]
+
+        if arr.ndim not in (2, 3):
+            raise ValueError(f"Unsupported CZI image shape after normalization: {arr.shape}")
+
+        if arr.dtype != np.uint8:
+            # Rescale to uint8 for broad TIFF compatibility.
+            arr = arr.astype(np.float32)
+            min_v = float(arr.min())
+            max_v = float(arr.max())
+            if max_v > min_v:
+                arr = (arr - min_v) / (max_v - min_v)
+            arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
+
+        return arr
+
+    def _convert_with_openslide(self, inp, out):
+        with OpenSlide(str(inp)) as slide:
+            width, height = slide.dimensions
+            if not self.config.INDIVIDUAL_TILES:
+                image = slide.read_region((0, 0), 0, (width, height)).convert("RGB")
+                tifffile.imwrite(str(out), np.asarray(image), photometric='rgb', compression='zlib')
+                return
+
+            tile_size = self.config.OUTPUT_TILE_SIZE
+            out.mkdir(parents=True, exist_ok=True)
+            tile_count = 0
+            for y in range(0, height, tile_size):
+                for x in range(0, width, tile_size):
+                    w = min(tile_size, width - x)
+                    h = min(tile_size, height - y)
+                    tile = slide.read_region((x, y), 0, (w, h)).convert("RGB")
+                    tile_array = np.asarray(tile)
+                    tile_path = out / f"tile_y{y:06d}_x{x:06d}.{self.config.OUTPUT_TILE_FORMAT}"
+                    tifffile.imwrite(str(tile_path), tile_array, photometric='rgb', compression='zlib')
+                    tile_count += 1
+                    if tile_count % 100 == 0:
+                        logging.info(f"Wrote {tile_count} tiles for {inp}")
+
+            manifest_path = out / "manifest.txt"
+            with open(manifest_path, 'w') as f:
+                f.write(f"source={inp}\n")
+                f.write(f"width={width}\n")
+                f.write(f"height={height}\n")
+                f.write(f"tile_size={tile_size}\n")
+                f.write(f"tile_count={tile_count}\n")
+
+    def _convert_with_czifile(self, inp, out):
+        with czifile.CziFile(str(inp)) as czi:
+            arr = czi.asarray()
+        normalized = self._normalize_image_array(arr)
+
+        if not self.config.INDIVIDUAL_TILES:
+            if normalized.ndim == 3:
+                tifffile.imwrite(str(out), normalized, photometric='rgb', compression='zlib')
+            else:
+                tifffile.imwrite(str(out), normalized, photometric='minisblack', compression='zlib')
+            return
+
+        height, width = normalized.shape[:2]
+        tile_size = self.config.OUTPUT_TILE_SIZE
+        out.mkdir(parents=True, exist_ok=True)
+        tile_count = 0
+        for y in range(0, height, tile_size):
+            for x in range(0, width, tile_size):
+                tile = normalized[y:y + tile_size, x:x + tile_size]
+                tile_path = out / f"tile_y{y:06d}_x{x:06d}.{self.config.OUTPUT_TILE_FORMAT}"
+                if tile.ndim == 3:
+                    tifffile.imwrite(str(tile_path), tile, photometric='rgb', compression='zlib')
+                else:
+                    tifffile.imwrite(str(tile_path), tile, photometric='minisblack', compression='zlib')
+                tile_count += 1
+                if tile_count % 100 == 0:
+                    logging.info(f"Wrote {tile_count} tiles for {inp}")
+
+        manifest_path = out / "manifest.txt"
+        with open(manifest_path, 'w') as f:
+            f.write(f"source={inp}\n")
+            f.write(f"width={width}\n")
+            f.write(f"height={height}\n")
+            f.write(f"tile_size={tile_size}\n")
+            f.write(f"tile_count={tile_count}\n")
 
     def convert_slide(self, inp, out):
-        cur_file = inp
         try:
-            slide_info = core.get_slide_info(inp)
-            zoom_info = core.get_zoomlevels_dict(inp)
-            z = max(zoom_info)
-            x_range, y_range, total_tiles = zoom_info[z][0], zoom_info[z][1], zoom_info[z][-1]
-            dim_x, dim_y, tile_size = slide_info["Width"], slide_info["Height"], slide_info["TileSize"]
-            spx, spy = slide_info["MicrometresPerPixelX"], slide_info["MicrometresPerPixelY"]
-
-            sp = mir.vector_double()
-            sp.push_back(spx)
-            sp.push_back(spy)
-
-            writer = mir.MultiResolutionImageWriter()
-            writer.openFile(str(out))
-            writer.setTileSize(tile_size)
-            writer.setCompression(mir.Compression_JPEG)
-            writer.setJPEGQuality(75)
-            writer.setDataType(mir.DataType_UChar)
-            writer.setColorType(mir.ColorType_RGB)
-            writer.writeImageInformation(dim_x, dim_y)
-            writer.setSpacing(sp)
-
-            sess = requests.Session()
-            with self.status_lock:
-                self.processing_status[cur_file] = {
-                    'last_tile_count': 0,
-                    'last_progress_time': time.time(),
-                    'lock': threading.Lock()
-                }
-
-            with ThreadPoolExecutor(max_workers=self.config.WORKERS) as executor:
-                futures = {
-                    executor.submit(self.process_tile, xi, yi, tile_size, inp, z, sess, cur_file): (xi, yi)
-                    for yi in range(y_range) for xi in range(x_range)
-                }
-
-                cnt = 0
-                for future in futures:
-                    tile_data, xo, yo = future.result()
-                    if tile_data is None:
-                        continue
-                    writer.writeBaseImagePartToLocation(tile_data, xo, yo)
-                    cnt += 1
-                    print(f"Processed {cnt}/{total_tiles} tiles")
-
-            writer.finishImage()
-            sess.close()
+            try:
+                self._convert_with_openslide(inp, out)
+                logging.info(f"Converted {inp} to {out} using OpenSlide")
+            except (OpenSlideError, OSError, RuntimeError) as openslide_error:
+                logging.warning(
+                    f"OpenSlide could not read {inp}; falling back to czifile. Error: {openslide_error}"
+                )
+                self._convert_with_czifile(inp, out)
             logging.info(f"Successfully converted {inp} to {out}")
 
         except Exception as e:
             logging.error(f"Failed to convert {inp}: {e}", exc_info=True)
-        finally:
-            with self.status_lock:
-                if cur_file in self.processing_status:
-                    del self.processing_status[cur_file]
-            gc.collect()
 
     def load_processed_files(self):
         if not self.config.PROCESSED_FILES_RECORD.is_file():
@@ -152,35 +151,34 @@ class SlideConverter:
             for file in processed_files:
                 f.write(f"{file}\n")
 
-    def monitor_progress(self):
-        while True:
-            time.sleep(self.config.STALL_TIMEOUT_SECONDS)
-            with self.status_lock:
-                for fp, st in list(self.processing_status.items()):
-                    with st['lock']:
-                        if time.time() - st['last_progress_time'] > self.config.STALL_TIMEOUT_SECONDS:
-                            logging.warning(f"Stall detected: {fp}. Rerunning PMA.start.")
-                            run_pma_start(self.config.PMA_EXECUTABLE_PATH, fp)
-                            st['last_progress_time'] = time.time()
-
     def run(self):
         processed_files = self.load_processed_files()
-        threading.Thread(target=self.monitor_progress, daemon=True).start()
-        logging.info("Started monitoring thread.")
 
         while True:
             try:
                 czi_files = [f for f in self.config.INPUT_FOLDER.iterdir() if f.suffix.lower() == '.czi']
+                pending_files = []
                 for cf in czi_files:
                     cf_path = cf.resolve()
-                    if str(cf_path) in processed_files:
-                        continue
-                    run_pma_start(self.config.PMA_EXECUTABLE_PATH, cf_path)
-                    time.sleep(5)
-                    out_tif = self.config.OUTPUT_FOLDER / f"{cf.stem}.tif"
-                    self.convert_slide(cf_path, out_tif)
+                    if self.config.FORCE_RUN or (str(cf_path) not in processed_files):
+                        pending_files.append(cf)
+
+                total_pending = len(pending_files)
+                for idx, cf in enumerate(pending_files, start=1):
+                    cf_path = cf.resolve()
+                    progress_msg = f"Processing file {idx}/{total_pending}: {cf.name}"
+                    print(progress_msg)
+                    logging.info(progress_msg)
+                    if self.config.INDIVIDUAL_TILES:
+                        out_path = self.config.OUTPUT_FOLDER / cf.stem
+                    else:
+                        out_path = self.config.OUTPUT_FOLDER / f"{cf.stem}.tif"
+                    self.convert_slide(cf_path, out_path)
                     processed_files.add(str(cf_path))
                     self.save_processed_files(processed_files)
+                if self.config.RUN_ONCE:
+                    logging.info("RUN_ONCE enabled; exiting after single scan.")
+                    break
                 time.sleep(self.config.CHECK_INTERVAL_SECONDS)
             except KeyboardInterrupt:
                 logging.info("Shutdown signal received. Exiting.")

@@ -4,124 +4,79 @@
 ![Python Version](https://img.shields.io/badge/Python-3.7%2B-blue.svg)
 ![GitHub Workflow Status](https://img.shields.io/github/workflow/status/your_username/CZI_Converter/CI)
 
-## 🌟 **Transforming High-Quality CZI Images into TIFF with Ease**
+This is a fork of [farbodkhoraminia/CZI-converter](https://github.com/farbodkhoraminia/CZI-converter).
 
-### **Unlock the Full Potential of Your ZEISS CZI Images**
+## Fork-Specific Features
 
-**Carl Zeiss Image (CZI)** files are renowned for their exceptional quality and versatility, making them a top choice for researchers and professionals in various scientific fields. However, despite their superior imaging capabilities, CZI files often face compatibility challenges with many popular image analysis platforms. This is where **CZI Converter** steps in to bridge the gap, offering a seamless solution to convert your high-resolution CZI images into the universally compatible TIFF format.
+This fork adds cross-platform and workflow controls focused on macOS and large-output handling.
 
----
+- macOS-compatible conversion backend using `openslide-python` with automatic fallback to `czifile`.
+- Two output modes controlled by `INDIVIDUAL_TILES`:
+	- `true`: save a folder of smaller tile TIFFs plus a `manifest.txt`.
+	- `false`: save one large TIFF per input slide.
+- Reprocessing control via `FORCE_RUN`:
+	- `false`: skip files recorded in `PROCESSED_FILES_RECORD`.
+	- `true`: always process files, even if already recorded.
+- Single-pass or watch-loop execution via `RUN_ONCE`.
+- Per-file progress indicator in console/logs: `Processing file X/Y: <name>.czi`.
 
-## 📈 **Why CZI Images from ZEISS Stand Out**
+Additional dev features that have been added are:
 
-- **Unmatched Image Quality:** CZI files capture intricate details with high resolution, enabling precise analysis and visualization.
-- **Multi-Dimensional Data:** Support for multiple channels, time points, and Z-stacks, allowing comprehensive imaging studies.
-- **Metadata-Rich:** Embeds extensive metadata, facilitating better data management and reproducibility in research.
+- `uv` for dependency management and running the converter.
+- simple testing suite that downloads a sample slide and verifies conversion to TIFF.
 
-While these features make CZI files indispensable for detailed imaging tasks, they also introduce compatibility hurdles.
+## Quick Start
 
----
+1. Sync dependencies:
 
-## 🔄 **Why Convert CZI to TIFF?**
-
-- **Universal Compatibility:** TIFF is a widely supported format across various image analysis tools, ensuring your data is accessible and usable without proprietary constraints.
-- **Ease of Sharing:** TIFF files are easier to share and collaborate on, eliminating the need for specialized software to view or analyze images.
-- **Integration with Analysis Pipelines:** Simplifies the integration of your imaging data into automated analysis workflows and platforms.
-
----
-
-## 🛠️ **The Conversion Challenge**
-
-Converting large CZI files (>2GB) to TIFF is **notoriously challenging** due to:
-
-- **High Resource Consumption:** Large file sizes demand significant memory and processing power, often leading to system slowdowns or crashes.
-- **Time-Intensive Processes:** Manual conversion can be tedious and time-consuming, especially when dealing with multiple large files.
-- **Complexity in Handling Metadata:** Preserving essential metadata during conversion requires meticulous handling to maintain data integrity.
-
----
-
-## 🚀 **Introducing CZI Converter: Your Automated Conversion Pipeline**
-
-**CZI Converter** is designed to **simplify and accelerate** the conversion of CZI files to TIFF, addressing the challenges head-on:
-
-- **Automated Workflow:** Monitors designated input folders and automatically processes new CZI files without manual intervention.
-- **Optimized Performance:** Uses multi-threading to handle large files efficiently, significantly reducing conversion time.
-- **Memory-Friendly:** Engineered to manage resources effectively, to operate smoothly even with large image sizes.
-- **User-Friendly Configuration:** Easy-to-edit configuration files allow customization to fit your specific environment and requirements.
-- **Comprehensive Logging:** Detailed logs keep you informed about the conversion status, errors, and progress, aiding in troubleshooting and optimization.
-
-With **CZI Converter**, you can focus on your research and analysis, leaving the heavy lifting of file conversion to a reliable and efficient tool.
-
----
-# 🚀 Getting Started
-
-## 📦 Installation Guide
-
-Follow these steps to install and set up **CZI Converter**:
-
-### 1️⃣ Clone the Repository
 ```bash
-git clone https://github.com/farbodkhoraminia/CZI-Converter.git
-cd CZI_Converter
+uv sync
 ```
 
-### 2️⃣ Set Up a Virtual Environment (Optional but Recommended)
-- **On Windows:**
-  ```bash
-  python -m venv venv
-  venv\Scripts\activate
-  ```
-- **On macOS/Linux:**
-  ```bash
-  python3 -m venv venv
-  source venv/bin/activate
-  ```
+2. Configure behavior in `config.yaml`.
 
-### 3️⃣ Install Dependencies
+3. Run:
+
 ```bash
-pip install -r requirement.txt
+uv run main.py
 ```
 
-### 4️⃣ Configure Input and Output Paths
-Open the `config.json` file in your text editor and specify the input and output paths.
+## Configuration Reference
 
-**Example:**
-```json
-{
-    "input_folder": "path/to/input_folder",
-    "output_folder": "path/to/output_folder"
-}
-```
+The following keys are supported in `config.yaml`:
 
-### 5️⃣ Run the Converter
+- `INPUT_FOLDER`: Folder scanned for `.czi` files.
+- `OUTPUT_FOLDER`: Destination for output TIFFs or tile folders.
+- `PROCESSED_FILES_RECORD`: File that stores processed input paths.
+- `LOG_FILE`: Log file path.
+- `CHECK_INTERVAL_SECONDS`: Poll interval when `RUN_ONCE` is `false`.
+- `RUN_ONCE`: If `true`, process one scan and exit.
+- `FORCE_RUN`: If `true`, do not skip previously processed files.
+- `INDIVIDUAL_TILES`: Output mode toggle (`true` tiles, `false` single TIFF).
+- `OUTPUT_TILE_SIZE`: Tile edge size (pixels) when `INDIVIDUAL_TILES=true`.
+- `OUTPUT_TILE_FORMAT`: Tile extension/format (for example `tif`).
+
+## Output Behavior
+
+When `INDIVIDUAL_TILES=true`, each slide is written as:
+
+- `OUTPUT_FOLDER/<slide_name>/tile_yXXXXXX_xXXXXXX.<format>`
+- `OUTPUT_FOLDER/<slide_name>/manifest.txt`
+
+When `INDIVIDUAL_TILES=false`, each slide is written as:
+
+- `OUTPUT_FOLDER/<slide_name>.tif`
+
+## Development
+
+To run tests:
+
 ```bash
-python czi_converter.py
+uv run pytest
 ```
 
-📂 **Logs:** Conversion logs are stored in the `logs` directory. Check the relevant `.log` file for progress updates or troubleshooting errors.
+## Credits
 
+This project is a fork of [farbodkhoraminia/CZI-converter](https://github.com/farbodkhoraminia/CZI-converter).
 
-# ❓ FAQ & Troubleshooting
-
-### ❓ What should I do if the converter crashes on large files?
-✅ **Solution:** Reduce the number of threads in `config.json` or allocate more memory to your system.
-
-### ❓ How do I fix missing dependencies?
-✅ **Solution:** Reinstall all required dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-### ❓ Why is the conversion process slow?
-✅ **Solution:** Optimize your system resources:
-- Check your CPU and disk I/O usage.
-- Adjust the thread count in `config.json`.
-
-### ❓ How can I modify advanced settings?
-✅ **Solution:** Customize the `config.json` file:
-- Adjust multi-threading levels for better performance.
-- Change logging verbosity for detailed debugging.
-- Optimize memory settings to handle large files.
-
-### ❓ Where are my converted files stored?
-✅ **Solution:** Converted files are saved in the directory specified in the `output_folder` field of the `config.json` file.
+Nicolas Chiaruttini (2023) ‘CZI file examples’. Zenodo. Available at: https://doi.org/10.5281/zenodo.8305531. *Used in the testing suite*
